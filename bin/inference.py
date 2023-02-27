@@ -11,13 +11,13 @@ from functools import partial
 from matplotlib import pyplot as plt
 from histocartography.interpretability import GraphGradCAMExplainer
 
-from seggini.model import NR_CLASSES, BACKGROUND_CLASS, THRESHOLD, WSI_FIX, VARIABLE_SIZE, DISCARD_THRESHOLD
+from seggini.model import NODE_CLASSES, BACKGROUND_CLASS, THRESHOLD, WSI_FIX, VARIABLE_SIZE, DISCARD_THRESHOLD
 from seggini.model import save_confusion_matrix, get_segmentation_map, show_class_activation, show_segmentation_masks
 from seggini.model import BaseLogger
 from seggini.model import F1Score
 from seggini.model import GraphClassifier, NodeClassifier, CombinedClassifier
 from seggini.model import GraphDataset, GraphDatapoint, collate_graphs
-
+NR_CLASSES = NODE_CLASSES
 
 class BaseInference:
     def __init__(self, model, device=None, **kwargs) -> None:

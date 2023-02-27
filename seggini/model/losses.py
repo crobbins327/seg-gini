@@ -30,7 +30,7 @@ class MultiLabelBCELoss(nn.Module):
 
 
 class NodeStochasticCrossEntropy(nn.Module):
-    def __init__(self, drop_probability=0.0, nodes_to_keep=None, background_label=4, weight=None) -> None:
+    def __init__(self, drop_probability=0.0, nodes_to_keep=None, background_label=0, weight=None) -> None:
         super().__init__()
         assert (
             0.0 <= drop_probability <= 1.0

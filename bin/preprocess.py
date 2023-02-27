@@ -8,6 +8,11 @@ from dgl.data.utils import save_graphs
 from PIL import Image
 Image.MAX_IMAGE_PIXELS = 100000000000
 
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+
+
 from seggini.preprocess import PARTIAL
 from seggini.preprocess import Constants
 from seggini.preprocess import create_pickle, save_tissue_mask, save_superpixel_map
@@ -21,11 +26,18 @@ from histocartography.preprocessing import (
     RAGGraphBuilder                      # graph builder
 )
 
+# from histocartography.visualization import OverlayGraphVisualization, InstanceImageVisualization
+# visualizer = OverlayGraphVisualization(
+#     instance_visualizer=InstanceImageVisualization(
+#         instance_style="filled+outline"
+#     )
+# )
+
 def preprocessing(constants: Constants):
     # get image paths
     image_fnames = glob.glob(os.path.join(
         constants.IMAGES_PATH,
-        '*.png'))
+        '*.jpg'))
     image_fnames.sort()
 
     # 1. define stain normalizer
@@ -47,7 +59,7 @@ def preprocessing(constants: Constants):
     # 4. define feature extractor
     feature_extractor = AugmentedDeepFeatureExtractor(
         architecture='mobilenet_v2',
-        num_workers=1,
+        num_workers=0,
         rotations=[0, 90, 180, 270],
         flips=['n', 'h'],
         patch_size=144,
@@ -113,9 +125,11 @@ def preprocessing(constants: Constants):
 
         # f. load annotation masks
         for partial in PARTIAL:
+            # annotation_path = constants.ANNOTATIONS_PATH / \
+            #                   ('annotation_masks_' + str(partial)) / \
+            #                   (image_name + '.png')
             annotation_path = constants.ANNOTATIONS_PATH / \
-                              ('annotation_masks_' + str(partial)) / \
-                              (image_name + '.png')
+                              (image_name + '.jpg')
             annotation_mask = np.array(Image.open(annotation_path))
 
             # g. annotation post-processing
@@ -135,6 +149,14 @@ def preprocessing(constants: Constants):
                 image_ids_failing.append(image_path)
                 pass
 
+            # visualize graph
+            # viz_cg = visualizer.process(
+            #     canvas=normalized_image,
+            #     graph=graph,
+            #     instance_map=superpixels
+            # )
+            # viz_cg.show()
+
             # i. save
             save_graphs(
                 filename=str(constants.GRAPHS_PATH/ ('partial_' + str(partial)) / (image_name + '.bin')),
@@ -142,14 +164,15 @@ def preprocessing(constants: Constants):
             )
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--base_path",
-                        type=str,
-                        help='path to preprocess SICAPv2 for WSIs.',
-                        required=True)
-    args = parser.parse_args()
-
-    constants = Constants(base_path=Path(args.base_path))
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument("--base_path",
+    #                     type=str,
+    #                     help='path to preprocess SICAPv2 for WSIs.',
+    #                     required=True)
+    # args = parser.parse_args()
+    #
+    # constants = Constants(base_path=Path(args.base_path))
+    constants = Constants(base_path=Path("I:/SICAPv2/SICAPv2/SICAPv2/"))
 
     create_pickle(constants)
     preprocessing(constants)

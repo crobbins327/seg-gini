@@ -37,9 +37,9 @@ def get_config():
 
 def get_metadata(constants):
     preprocess_directory = constants.PREPROCESS_PATH
-    superpixel_directory = preprocess_directory / "superpixels"
-    tissue_mask_directory = preprocess_directory / "tissue_masks"
-    graph_directory = preprocess_directory / "graphs" / ("partial_" + str(constants.PARTIAL))
+    superpixel_directory = os.path.join(preprocess_directory, "superpixels")
+    tissue_mask_directory = os.path.join(preprocess_directory, "tissue_masks")
+    graph_directory = os.path.join(preprocess_directory, "graphs", ("partial_" + str(constants.PARTIAL)))
 
     image_metadata = pd.read_pickle(constants.IMAGES_DF)
     annotation_metadata = pd.read_pickle(constants.ANNOTATIONS_DF)
@@ -70,10 +70,8 @@ def merge_metadata(
     if graph_directory is not None:
         graph_metadata = pd.DataFrame(
             [
-                (path.name.split(".")[0], path)
-                for path in filter(
-                    lambda x: x.name.endswith(".bin"), graph_directory.iterdir()
-                )
+                (file.split("_ds")[0], os.path.join(graph_directory, file))
+                for file in os.listdir(graph_directory) if file.endswith(".bin")
             ],
             columns=["name", "graph_path"],
         )
@@ -83,10 +81,8 @@ def merge_metadata(
     if superpixel_directory is not None:
         superpixel_metadata = pd.DataFrame(
             [
-                (path.name.split(".")[0], path)
-                for path in filter(
-                    lambda x: x.name.endswith(".h5"), superpixel_directory.iterdir()
-                )
+                (file.split("_ds")[0], os.path.join(superpixel_directory, file))
+                for file in os.listdir(superpixel_directory) if file.endswith(".h5")
             ],
             columns=["name", "superpixel_path"],
         )
@@ -96,10 +92,8 @@ def merge_metadata(
     if tissue_mask_directory is not None:
         tissue_metadata = pd.DataFrame(
             [
-                (path.name.split(".")[0], path)
-                for path in filter(
-                    lambda x: x.name.endswith(".png"), tissue_mask_directory.iterdir()
-                )
+                (file.split("_ds")[0], os.path.join(tissue_mask_directory, file))
+                for file in os.listdir(tissue_mask_directory) if file.endswith(".png")
             ],
             columns=["name", "tissue_mask_path"],
         )
@@ -123,7 +117,7 @@ def to_mapper(df):
     mapper = dict()
     for name, row in df.iterrows():
         mapper[name] = np.array(
-            [row["benign"], row["grade3"], row["grade4"], row["grade5"]]
+            [row["neg"], row["low"], row["mod"], row["hi"]]
         )
     return mapper
 
@@ -151,7 +145,7 @@ def read_image(image_path: str) -> np.ndarray:
     Returns:
         np.array: A numpy array representation of the image
     """
-    assert image_path.exists()
+    assert os.path.exists(image_path)
     try:
         with Image.open(image_path) as img:
             image = np.array(img)
@@ -159,7 +153,10 @@ def read_image(image_path: str) -> np.ndarray:
         raise OSError(e)
     return image
 
-def fast_histogram(input_array: np.ndarray, nr_values: int) -> np.ndarray:
+def fast_histogram(input_array: np.ndarray,
+                   nr_values: int,
+                   nr_list: Optional[list] = []
+                   ) -> np.ndarray:
     """Calculates a histogram of a matrix of the values from 0 up to (excluding) nr_values
 
     Args:
@@ -170,8 +167,14 @@ def fast_histogram(input_array: np.ndarray, nr_values: int) -> np.ndarray:
         np.array: Output tensor
     """
     output_array = np.empty(nr_values, dtype=int)
-    for i in range(nr_values):
-        output_array[i] = (input_array == i).sum()
+    if len(nr_list) > 0:
+        j=0
+        for i in nr_list:
+            output_array[j] = (input_array == i).sum()
+            j+=1
+    else:
+        for i in range(nr_values):
+            output_array[i] = (input_array == i).sum()
     return output_array
 
 def fast_confusion_matrix(y_true: Union[np.ndarray, torch.Tensor], y_pred: Union[np.ndarray, torch.Tensor], nr_classes: int):

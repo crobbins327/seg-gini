@@ -4,7 +4,7 @@ import torch
 from torch import nn
 from histocartography.ml.layers.multi_layer_gnn import MultiLayerGNN
 
-from .constants import NR_CLASSES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT
+from .constants import NODE_CLASSES, SLIDE_CLASSES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT
 from .utils import dynamic_import_from
 
 
@@ -67,7 +67,7 @@ class NodeClassifierHead(nn.Module):
         self,
         latent_dim: int,
         node_classifier_config: Dict,
-        nr_classes: int = NR_CLASSES,
+        nr_classes: int = NODE_CLASSES,
     ) -> None:
         super().__init__()
         self.seperate_heads = node_classifier_config.pop("seperate_heads", True)
@@ -103,7 +103,7 @@ class GraphClassifierHead(nn.Module):
             self,
             latent_dim: int,
             graph_classifier_config: Dict,
-            nr_classes: int = NR_CLASSES
+            nr_classes: int = SLIDE_CLASSES
     ) -> None:
         super().__init__()
         self.graph_classifier = ClassifierHead(
@@ -163,7 +163,7 @@ class NodeClassifier(nn.Module):
         self,
         gnn_config: Dict,
         node_classifier_config: Dict,
-        nr_classes: int = NR_CLASSES,
+        nr_classes: int = NODE_CLASSES,
     ) -> None:
         super().__init__()
         self.gnn_model = MultiLayerGNN(**gnn_config)
@@ -195,7 +195,8 @@ class CombinedClassifier(nn.Module):
         gnn_config: Dict,
         graph_classifier_config: Dict,
         node_classifier_config: Dict,
-        nr_classes: int = NR_CLASSES,
+        node_classes: int = NODE_CLASSES,
+        graph_classes: int = SLIDE_CLASSES
     ) -> None:
         """Build a classifier to classify superpixel tissue graphs
 
@@ -214,10 +215,10 @@ class CombinedClassifier(nn.Module):
                 f"Only supported agg operators are [none, lstm, concat]"
             )
         self.graph_classifier = GraphClassifierHead(
-            latent_dim, graph_classifier_config, nr_classes
+            latent_dim, graph_classifier_config, graph_classes
         )
         self.node_classifiers = NodeClassifierHead(
-            latent_dim, node_classifier_config, nr_classes
+            latent_dim, node_classifier_config, node_classes
         )
 
     def forward(self, graph: dgl.DGLGraph) -> Tuple[torch.Tensor, torch.Tensor]:

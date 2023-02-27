@@ -9,7 +9,7 @@ import copy
 import torch
 from torch import nn
 
-from seggini.model import NR_CLASSES, BACKGROUND_CLASS, VARIABLE_SIZE, WSI_FIX, THRESHOLD, DISCARD_THRESHOLD
+from seggini.model import NODE_CLASSES, SLIDE_CLASSES, BACKGROUND_CLASS, VARIABLE_SIZE, WSI_FIX, THRESHOLD, DISCARD_THRESHOLD
 from seggini.model import GraphDataset
 from seggini.model import prepare_graph_dataset, prepare_graph_dataloader, get_config, get_batched_segmentation_maps
 from seggini.model import CombinedClassifier
@@ -99,7 +99,7 @@ def train_classifier(
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Model
-    model = CombinedClassifier(nr_classes=NR_CLASSES, **model_config)
+    model = CombinedClassifier(node_classes=NODE_CLASSES, graph_classes=SLIDE_CLASSES, **model_config)
     model = model.to(device)
 
     # Loss functions
@@ -109,6 +109,9 @@ def train_classifier(
         train_loss["node"]["params"]["weight"] = train_dataset.get_dataset_loss_weights(
             log=train_loss["params"]["use_log_frequency_weights"]
         )
+        # trick to get rid of tissue node..... will fix with new dataset....
+        # train_loss["node"]["params"]["weight"] = torch.cat((torch.zeros(1), train_loss["node"]["params"]["weight"]), dim=0)
+
         train_dataset.set_mode("graph")
         train_loss["graph"]["params"]["weight"] = train_dataset.get_dataset_loss_weights(
             log=train_loss["params"]["use_log_frequency_weights"]
@@ -122,6 +125,9 @@ def train_classifier(
         val_loss["node"]["params"]["weight"] = val_dataset.get_dataset_loss_weights(
             log=val_loss["params"]["use_log_frequency_weights"]
         )
+        # trick to get rid of tissue node..... will fix with new dataset....
+        # val_loss["node"]["params"]["weight"] = torch.cat((torch.zeros(1), val_loss["node"]["params"]["weight"]), dim=0)
+
         val_dataset.set_mode("graph")
         val_loss["graph"]["params"]["weight"] = val_dataset.get_dataset_loss_weights(
             log=val_loss["params"]["use_log_frequency_weights"]
@@ -137,27 +143,27 @@ def train_classifier(
         name="graph",
         metrics_config=metrics_config,
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=SLIDE_CLASSES,
         eval_segmentation=False
     )
     train_node_metric_logger = LoggingHelper(
         name="node",
         metrics_config=metrics_config,
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
         eval_segmentation=False
     )
     train_combined_metric_logger = BaseLogger(
         metrics_config={},
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
     )
     val_graph_metric_logger = LoggingHelper(
         name="graph",
         metrics_config=metrics_config,
         focused_metric=params["focused_metric"],
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=SLIDE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
         wsi_fix=WSI_FIX,
@@ -168,7 +174,7 @@ def train_classifier(
         metrics_config=metrics_config,
         focused_metric=params["focused_metric"],
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
         wsi_fix=WSI_FIX,
@@ -178,7 +184,7 @@ def train_classifier(
         metrics_config={},
         focused_metric=params["focused_metric"],
         background_label=BACKGROUND_CLASS,
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
         wsi_fix=WSI_FIX,
@@ -202,7 +208,7 @@ def train_classifier(
                 "graph_labels": graph_batch.graph_labels.to(device),
                 "node_logits": node_logits,
                 "node_labels": graph_batch.node_labels.to(device),
-                "node_associations": graph.batch_num_nodes,
+                "node_associations": graph.batch_num_nodes(),
             }
             combined_loss, graph_loss, node_loss = train_criterion(**loss_information)
             combined_loss.backward()
@@ -222,7 +228,7 @@ def train_classifier(
             train_node_metric_logger.add_iteration_outputs(
                 logits=loss_information["node_logits"],
                 targets=loss_information["node_labels"],
-                node_associations=graph.batch_num_nodes,
+                node_associations=graph.batch_num_nodes(),
             )
             train_combined_metric_logger.add_iteration_outputs(loss=combined_loss)
 
@@ -247,7 +253,7 @@ def train_classifier(
                         "graph_labels": graph_batch.graph_labels.to(device),
                         "node_logits": node_logits,
                         "node_labels": graph_batch.node_labels.to(device),
-                        "node_associations": graph.batch_num_nodes,
+                        "node_associations": graph.batch_num_nodes(),
                     }
                     combined_loss, graph_loss, node_loss = val_criterion(**loss_information)
 
@@ -258,7 +264,7 @@ def train_classifier(
                 # Graph Head Prediction
                 if data_config["val_data"]["eval_segmentation"]:
                     inferencer = GraphGradCAMBasedInference(
-                        NR_CLASSES, model, device=device
+                        NODE_CLASSES, model, device=device
                     )
                     segmentation_maps = inferencer.predict_batch(
                         graph, graph_batch.instance_maps
@@ -283,9 +289,9 @@ def train_classifier(
                 if data_config["val_data"]["eval_segmentation"]:
                     segmentation_maps = get_batched_segmentation_maps(
                         node_logits=loss_information["node_logits"],
-                        node_associations=graph.batch_num_nodes,
+                        node_associations=graph.batch_num_nodes(),
                         superpixels=graph_batch.instance_maps,
-                        NR_CLASSES=NR_CLASSES,
+                        NR_CLASSES=NODE_CLASSES,
                     )
                     segmentation_maps = torch.as_tensor(segmentation_maps)
                     annotation = torch.as_tensor(graph_batch.segmentation_masks)
@@ -302,7 +308,7 @@ def train_classifier(
                     predicted_segmentation=segmentation_maps,
                     tissue_masks=tissue_masks,
                     image_labels=graph_batch.graph_labels,
-                    node_associations=graph.batch_num_nodes,
+                    node_associations=graph.batch_num_nodes(),
                 )
 
                 val_combined_metric_logger.add_iteration_outputs(
@@ -333,7 +339,12 @@ def train_classifier(
 
 
 if __name__ == "__main__":
-    base_path, config = get_config()
+    # base_path, config = get_config()
+    base_path = r"C:\Users\snibb\Projects\HS-HER2_data"
+    config_file = r"C:\Users\snibb\Projects\seg-gini\config\hsher2_combined.yml"
+    import yaml
+    with open(config_file) as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
 
     # Train classifier
     model = train_classifier(

@@ -14,11 +14,11 @@ class Constants:
     def set_constants(self):
         self.PREPROCESS_PATH = self.BASE_PATH / 'preprocess'
         self.IMAGES_PATH = self.BASE_PATH / 'images'
-        self.ANNOTATIONS_PATH = self.BASE_PATH / 'annotation_masks'
+        self.ANNOTATIONS_PATH = self.BASE_PATH / 'masks'
         self.PICKLE_PATH = self.BASE_PATH / 'pickles'
 
-        self.STAIN_NORM_TARGET_IMAGE = 'data/target.png'  # define stain normalization target image.
-        self.IMAGE_LABELS = pd.read_csv('data/image_labels.csv')
+        self.STAIN_NORM_TARGET_IMAGE = 'C:/Users/snibb/Projects/seg-gini/data/target.png'  # define stain normalization target image.
+        self.IMAGE_LABELS = pd.read_csv('C:/Users/snibb/Projects/seg-gini/data/image_labels.csv')
 
         self.TISSUE_MASKS_PATH = self.PREPROCESS_PATH / 'tissue_masks'
         self.SUPERPIXELS_PATH = self.PREPROCESS_PATH / 'superpixels'

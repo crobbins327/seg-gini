@@ -13,7 +13,7 @@ from tqdm.auto import tqdm
 from pathlib import Path
 
 from .metrics import inverse_frequency, inverse_log_frequency
-from .constants import NR_CLASSES, LABEL, CENTROID, FEATURES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT
+from .constants import NODE_CLASSES, SLIDE_CLASSES, INCLUDE_CLASSES, LABEL, CENTROID, FEATURES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT
 from .constants import Constants
 from .utils import read_image, fast_histogram, get_metadata
 
@@ -55,8 +55,10 @@ class BaseDataset(Dataset):
         self.image_label_mapper = image_label_mapper
 
         self.supervision_mode = supervision_mode
-        self.num_classes = NR_CLASSES
+        self.node_classes = NODE_CLASSES
+        self.graph_classes = SLIDE_CLASSES
         self.downsample = downsample
+        self.include_classes = INCLUDE_CLASSES
 
         self.eval_segmentation = eval_segmentation
         self._load()
@@ -106,7 +108,7 @@ class BaseDataset(Dataset):
     @staticmethod
     def _load_graph(i, row):
         graph = load_graphs(str(row["graph_path"]))[0][0]
-        graph.readonly()
+        # graph.readonly()
         return graph
 
     def _load_h5(self, path):
@@ -202,7 +204,7 @@ class GraphDataset(BaseDataset):
         self._node_weights = self._compute_node_weights()
 
     def _compute_node_weight(self, node_labels: torch.Tensor) -> np.ndarray:
-        class_counts = fast_histogram(node_labels, nr_values=self.num_classes)
+        class_counts = fast_histogram(node_labels, nr_values=self.node_classes, nr_list=self.include_classes)
         return inverse_log_frequency(class_counts.astype(np.float32)[np.newaxis, :])[0]
 
     def _compute_node_weights(self) -> np.ndarray:
@@ -313,7 +315,7 @@ class GraphDataset(BaseDataset):
     def get_dataset_loss_weights(self, log=True) -> torch.Tensor:
         labels = self.get_labels()
         if self.supervision_mode == "node":
-            class_counts = fast_histogram(labels, self.num_classes)
+            class_counts = fast_histogram(labels, nr_values=self.node_classes, nr_list=self.include_classes)
         else:
             class_counts = labels.sum(dim=0).numpy()
         if log:
@@ -465,15 +467,16 @@ class AugmentedGraphDataset(GraphDataset):
         graph = self.graphs[index]
 
         # Create graph
-        augmented_graph = dgl.DGLGraph(graph_data=graph)
-        augmented_graph.ndata[CENTROID] = graph.ndata[CENTROID]
+        # augmented_graph = dgl.DGLGraph(graph_data=graph)
+        # augmented_graph.ndata[CENTROID] = graph.ndata[CENTROID]
+        augmented_graph = graph.clone()
 
         # Set features
         augmented_graph.ndata[GNN_NODE_FEAT_IN] = self._get_graph_features(graph, image_size)
 
         # Set node labels
         if self.supervision_mode == "node":
-            augmented_graph.ndata[LABEL] = graph.ndata[LABEL]
+            # augmented_graph.ndata[LABEL] = graph.ndata[LABEL]
             node_labels = augmented_graph.ndata[LABEL]
         else:
             node_labels = None
@@ -589,13 +592,18 @@ def prepare_graph_dataset(
     all_metadata, label_mapper = get_metadata(constants)
 
     # Select subset of samples
-    sample_names = []
-    for id_path in constants.ID_PATHS:
-        sample_names.append(pd.read_csv(id_path, index_col=0)["image_id"].values)
-    sample_names = np.concatenate(sample_names)
+    # sample_names = []
+    # for id_path in constants.ID_PATHS:
+    #     sample_names.append(pd.read_csv(id_path, index_col=0)["image_id"].values)
+    # sample_names = np.concatenate(sample_names)
+    sample_names = constants.ID_NAMES
+    # Use ids from folds to subset out training/val/test data
     metadata = all_metadata.loc[
         list(set(sample_names) & set(all_metadata.index.values))
     ]
+
+    # temporary until all files are processed correctly....
+    metadata = metadata.dropna()
 
     # Set dataset arguments
     arguments = {
