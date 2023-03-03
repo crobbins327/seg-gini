@@ -4,10 +4,12 @@ train:
       supervision_mode: node
       augmentation_mode: node
       eval_segmentation: False
+      split_combined_component_subgraphs: True
     val_data:
       supervision_mode: node
       downsample: 16
-      eval_segmentation: True
+      eval_segmentation: False
+      split_combined_component_subgraphs: True
   model:
     gnn_config:
       layer_type: gin_layer
@@ -39,15 +41,14 @@ train:
     node:
       - NodeClassificationF1Score
     segmentation:
-      - GleasonScoreF1
       - DatasetDice
 
   params:
     fold: 1
-    partial: 100
+    partial: noTissue-oPreproc
     centroid_features_mode: cat
 
-    focused_metric: NodeClassificationF1Score
+    focused_metric: MultiLabelF1Score
     loss:
       graph:
         class: MultiLabelBCELoss
@@ -68,11 +69,12 @@ train:
         lr: 0.0001
       scheduler: null
 
-    num_epochs: 2000
-    batch_size: 4
+    num_epochs: 1000
+    batch_size: 16
     num_workers: 8
     clip_gradient_norm: null
-    validation_frequency: 5
+    validation_frequency: 10
+    checkpoint_frequency: 20
     balanced_sampling: False
 
 test:
@@ -80,7 +82,8 @@ test:
     test_data:
       supervision_mode: node
       centroid_features_mode: cat
-      eval_segmentation: True
+      eval_segmentation: False
+      split_combined_component_subgraphs: False
   model:
     architecture: {}
   params:

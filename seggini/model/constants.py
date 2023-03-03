@@ -9,34 +9,42 @@ FEATURES = "feat"
 GNN_NODE_FEAT_IN = "gnn_node_feat_in"
 GNN_NODE_FEAT_OUT = "gnn_node_feat_out"
 
+# Total node classes including background/tissue
 NODE_CLASSES = 5
+# Total slide/graph classes
 SLIDE_CLASSES = 4
-INCLUDE_CLASSES = [1, 2, 3, 4, 5]
+# INCLUDE_CLASSES = [1, 2, 3, 4, 5]
+# Include these classes in the weighting
+INCLUDE_NODE_CLASSES = [0, 1, 2, 3, 4]
+# Used to explain node classes relative to graph classification
+EXPLAIN_NODE_CLASSES = [1, 2, 3, 4]
+EXPLAIN_GRAPH_CLASSES = [0, 1, 2, 3]
 BACKGROUND_CLASS = 0
 VARIABLE_SIZE = True
 WSI_FIX = True
 THRESHOLD = 0.003
 DISCARD_THRESHOLD = 5000
 VALID_FOLDS = [0, 1, 2, 3]
+MIN_COMBINED_COMP_NODES = 50
 
-MASK_VALUE_TO_TEXT = {
-    0: "unlabelled",
-    1: "tissue",
-    2: "neg",
-    3: "low",
-    4: "mod",
-    5: "hi"
-}
 # MASK_VALUE_TO_TEXT = {
 #     0: "unlabelled",
-#     # 1: "tissue",
-#     1: "neg",
-#     2: "low",
-#     3: "mod",
-#     4: "hi"
+#     1: "tissue",
+#     2: "neg",
+#     3: "low",
+#     4: "mod",
+#     5: "hi"
 # }
-MASK_VALUE_TO_COLOR = {0: "white", 1: "brown", 2: "blue", 3: "green", 4: "yellow", 5: "red"}
-# MASK_VALUE_TO_COLOR = {0: "white", 1: "blue", 2: "green", 3: "yellow", 4: "red"}
+MASK_VALUE_TO_TEXT = {
+    0: "unlabeled",
+    # 1: "tissue",
+    1: "neg",
+    2: "low",
+    3: "mod",
+    4: "hi",
+}
+# MASK_VALUE_TO_COLOR = {0: "white", 1: "brown", 2: "blue", 3: "green", 4: "yellow", 5: "red"}
+MASK_VALUE_TO_COLOR = {0: "white", 1: "blue", 2: "green", 3: "yellow", 4: "red"}
 
 
 class Constants:

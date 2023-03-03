@@ -10,14 +10,17 @@ from torch import nn
 from functools import partial
 from matplotlib import pyplot as plt
 from histocartography.interpretability import GraphGradCAMExplainer
+import os
 
-from seggini.model import NODE_CLASSES, BACKGROUND_CLASS, THRESHOLD, WSI_FIX, VARIABLE_SIZE, DISCARD_THRESHOLD
+from seggini.model import SLIDE_CLASSES, NODE_CLASSES, INCLUDE_NODE_CLASSES, EXPLAIN_NODE_CLASSES, EXPLAIN_GRAPH_CLASSES, BACKGROUND_CLASS, THRESHOLD, WSI_FIX, VARIABLE_SIZE, DISCARD_THRESHOLD
 from seggini.model import save_confusion_matrix, get_segmentation_map, show_class_activation, show_segmentation_masks
 from seggini.model import BaseLogger
 from seggini.model import F1Score
 from seggini.model import GraphClassifier, NodeClassifier, CombinedClassifier
 from seggini.model import GraphDataset, GraphDatapoint, collate_graphs
-NR_CLASSES = NODE_CLASSES
+# NR_CLASSES = min(SLIDE_CLASSES, NODE_CLASSES)
+BACKGROUND_CLASS = NODE_CLASSES if BACKGROUND_CLASS < 0 else BACKGROUND_CLASS
+
 
 class BaseInference:
     def __init__(self, model, device=None, **kwargs) -> None:
@@ -103,7 +106,7 @@ class NodeBasedInference(ClassificationInference):
                     loss_information = {
                         "logits": logits,
                         "targets": labels,
-                        "node_associations": graph.batch_num_nodes,
+                        "node_associations": graph.batch_num_nodes(),
                     }
                     loss = self.criterion(**loss_information)
                 else:
@@ -112,7 +115,7 @@ class NodeBasedInference(ClassificationInference):
                     loss=loss,
                     logits=logits,
                     targets=labels,
-                    node_associations=graph.batch_num_nodes,
+                    node_associations=graph.batch_num_nodes(),
                 )
         metrics = logger.log_and_clear()
         dataset.eval_segmentation = old_state
@@ -124,6 +127,10 @@ class GraphGradCAMBasedInference(BaseInference):
     def __init__(self, NR_CLASSES, model, **kwargs) -> None:
         super().__init__(model=model, **kwargs)
         self.NR_CLASSES = NR_CLASSES
+        if len(EXPLAIN_GRAPH_CLASSES)>0:
+            self.EXPLAIN_GRAPH_CLASSES = EXPLAIN_GRAPH_CLASSES
+        else:
+            self.EXPLAIN_GRAPH_CLASSES = list(range(self.NR_CLASSES))
         self.explainer = GraphGradCAMExplainer(model=model)
 
     def predict(self, graph, superpixels, operation="argmax"):
@@ -131,7 +138,7 @@ class GraphGradCAMBasedInference(BaseInference):
 
         graph = graph.to(self.device)
         importances, logits = self.explainer.process(
-            graph, list(range(self.NR_CLASSES))
+            graph, self.EXPLAIN_GRAPH_CLASSES
         )
         node_importances = (
                 importances * torch.as_tensor(logits)[0].sigmoid().numpy()[:, np.newaxis]
@@ -139,7 +146,7 @@ class GraphGradCAMBasedInference(BaseInference):
         return get_segmentation_map(
             node_predictions=node_importances,
             superpixels=superpixels,
-            NR_CLASSES=self.NR_CLASSES)
+            NR_CLASSES=self.EXPLAIN_GRAPH_CLASSES)
 
     def predict_batch(self, graphs, superpixels, operation="argmax"):
         segmentation_maps = list()
@@ -257,16 +264,16 @@ def log_segmentation_mask(
 
     # Set title to be DICE score
     metric = F1Score(
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         background_label=BACKGROUND_CLASS,
     )
     metric_value = metric(prediction=[prediction], ground_truth=[ground_truth])
     fig.suptitle(
-        f"Benign: {metric_value[0]}, Grade 3: {metric_value[1]}, Grade 4: {metric_value[2]}, Grade 5: {metric_value[3]}"
+        f"unlabeled: {metric_value[0]:.3f}, neg: {metric_value[1]:.3f}, low: {metric_value[2]:.3f}, mod: {metric_value[3]:.3f}, hi: {metric_value[4]:.3f}"
     )
 
-    file_name = save_path / f"{datapoint.name}.png"
+    file_name = os.path.join(save_path, f"{datapoint.name}.png")
     fig.savefig(str(file_name), dpi=300, bbox_inches="tight")
     plt.close(fig=fig)
 
@@ -290,7 +297,7 @@ def test_classifier(
         mode = "combined_supervision"
     else:
         raise NotImplementedError
-
+    classification_metrics = {}
     # Classification Inference
     if mode in ["graph_supervision", "combined_supervision"]:
         classification_inferer = GraphBasedInference(model=model, device=device)
@@ -298,20 +305,22 @@ def test_classifier(
             [
                 "MultiLabelF1Score",
             ],
-            nr_classes=NR_CLASSES,
+            nr_classes=SLIDE_CLASSES,
             background_label=BACKGROUND_CLASS,
         )
-        classification_metrics = classification_inferer.predict(test_dataset, graph_logger)
+        classification_metrics.update(classification_inferer.predict(test_dataset, graph_logger))
+
     if mode in ["node_supervision", "combined_supervision"]:
         classification_inferer = NodeBasedInference(model=model, device=device)
         node_logger = BaseLogger(
             [
                 "NodeClassificationF1Score"
             ],
-            nr_classes=NR_CLASSES,
+            nr_classes=NODE_CLASSES,
             background_label=BACKGROUND_CLASS,
         )
-        classification_metrics = classification_inferer.predict(test_dataset, node_logger)
+        classification_metrics.update(classification_inferer.predict(test_dataset, node_logger))
+
     print("Classification metrics: ", classification_metrics)
 
 
@@ -321,30 +330,29 @@ def test_classifier(
         inferer = GraphGradCAMBasedInference(
             model=model,
             device=device,
-            NR_CLASSES=NR_CLASSES,
+            NR_CLASSES=SLIDE_CLASSES,
             **kwargs
         )
     else:
         inferer = GraphNodeBasedInference(
             model=model,
             device=device,
-            NR_CLASSES=NR_CLASSES,
+            NR_CLASSES=SLIDE_CLASSES,
             **kwargs,
         )
     
     logger_pathologist = BaseLogger(
         [
-            "GleasonScoreF1",
             "DatasetDice",
         ],
         callbacks=[
             partial(
                 save_confusion_matrix,
-                classes=["Benign", "Grade6", "Grade7", "Grade8", "Grade9", "Grade10"],
-                save_path=prediction_save_path / "GleasonScoreF1.png",
+                classes=["unlabeled", "neg", "low", "mod", "hi"],
+                save_path=os.path.join(prediction_save_path, "HS-HER2Score.png"),
             )
         ],
-        nr_classes=NR_CLASSES,
+        nr_classes=NODE_CLASSES,
         background_label=BACKGROUND_CLASS,
         variable_size=VARIABLE_SIZE,
         wsi_fix=WSI_FIX,

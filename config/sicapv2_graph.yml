@@ -53,7 +53,7 @@ train:
           gamma: 0.997
 
     num_epochs: 2000
-    batch_size: 4
+    batch_size: 16
     num_workers: 8
     clip_gradient_norm: null
     validation_frequency: 5

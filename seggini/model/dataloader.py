@@ -11,9 +11,10 @@ from dgl.data.utils import load_graphs
 from torch.utils.data import Dataset, DataLoader
 from tqdm.auto import tqdm
 from pathlib import Path
+import networkx as nx
 
 from .metrics import inverse_frequency, inverse_log_frequency
-from .constants import NODE_CLASSES, SLIDE_CLASSES, INCLUDE_CLASSES, LABEL, CENTROID, FEATURES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT
+from .constants import NODE_CLASSES, SLIDE_CLASSES, INCLUDE_NODE_CLASSES, LABEL, CENTROID, FEATURES, GNN_NODE_FEAT_IN, GNN_NODE_FEAT_OUT, MIN_COMBINED_COMP_NODES
 from .constants import Constants
 from .utils import read_image, fast_histogram, get_metadata
 
@@ -28,6 +29,7 @@ class BaseDataset(Dataset):
         supervision_mode: str = "graph",
         eval_segmentation: bool = False,
         downsample: Optional[int] = 1,
+        split_combined_component_subgraphs: bool = False
     ) -> None:
         """
         Args:
@@ -53,12 +55,13 @@ class BaseDataset(Dataset):
 
         self.metadata = metadata
         self.image_label_mapper = image_label_mapper
-
+        self.split_combined_component_subgraphs = split_combined_component_subgraphs
+        self.min_component_nodes = MIN_COMBINED_COMP_NODES
         self.supervision_mode = supervision_mode
-        self.node_classes = NODE_CLASSES
+        self.node_classes = min(NODE_CLASSES, len(INCLUDE_NODE_CLASSES))
         self.graph_classes = SLIDE_CLASSES
         self.downsample = downsample
-        self.include_classes = INCLUDE_CLASSES
+        self.include_node_classes = INCLUDE_NODE_CLASSES
 
         self.eval_segmentation = eval_segmentation
         self._load()
@@ -81,16 +84,45 @@ class BaseDataset(Dataset):
         self._tissue_masks = list()
         self._graph_labels = list()
 
-    def _load_datapoint(self, i, row):
-        self._names.append(self._load_name(i, row))
-        self._graphs.append(self._load_graph(i, row))
-        self._graph_labels.append(self._load_graph_label(i, row))
-        self._image_sizes.append(self._load_image_size(i, row))
+    def _split_combined_components(self, graph):
+        G = dgl.to_networkx(graph).to_undirected()
+        connected_node_list = []
+        for node_list in nx.connected_components(G):
+            # print(node_list)
+            connected_node_list.append(list(node_list))
+        S = [graph.subgraph(c) for c in connected_node_list]
+        if self.min_component_nodes > 0:
+            S = [s for s in S if s.number_of_nodes() > self.min_component_nodes]
+        return S
 
-        if self.eval_segmentation:
-            self._annotations.append(self._load_image(row["annotation_mask_path"]))
-            self._superpixels.append(self._load_h5(row["superpixel_path"]))
-            self._tissue_masks.append(self._load_image(row["tissue_mask_path"]))
+    def _load_datapoint(self, i, row):
+        if self.split_combined_component_subgraphs:
+            subgraphs = self._split_combined_components(self._load_graph(i, row))
+            if self.eval_segmentation:
+                this_annotation_mask = self._load_image(row["annotation_mask_path"])
+                this_superpixel = self._load_h5(row["superpixel_path"])
+                this_tissue_mask = self._load_image(row["tissue_mask_path"])
+
+            for num, s in enumerate(subgraphs):
+                self._names.append(str(self._load_name(i, row))+"_s{}".format(num))
+                self._graphs.append(s)
+                self._graph_labels.append(self._load_graph_label(i, row))
+                self._image_sizes.append(self._load_image_size(i, row))
+                if self.eval_segmentation:
+                    self._annotations.append(this_annotation_mask)
+                    self._superpixels.append(this_superpixel)
+                    self._tissue_masks.append(this_tissue_mask)
+
+        else:
+            self._names.append(self._load_name(i, row))
+            self._graphs.append(self._load_graph(i, row))
+            self._graph_labels.append(self._load_graph_label(i, row))
+            self._image_sizes.append(self._load_image_size(i, row))
+
+            if self.eval_segmentation:
+                self._annotations.append(self._load_image(row["annotation_mask_path"]))
+                self._superpixels.append(self._load_h5(row["superpixel_path"]))
+                self._tissue_masks.append(self._load_image(row["tissue_mask_path"]))
 
     def _finish_loading(self):
         self._names = np.array(self._names)
@@ -204,7 +236,7 @@ class GraphDataset(BaseDataset):
         self._node_weights = self._compute_node_weights()
 
     def _compute_node_weight(self, node_labels: torch.Tensor) -> np.ndarray:
-        class_counts = fast_histogram(node_labels, nr_values=self.node_classes, nr_list=self.include_classes)
+        class_counts = fast_histogram(node_labels, nr_values=self.node_classes, nr_list=self.include_node_classes)
         return inverse_log_frequency(class_counts.astype(np.float32)[np.newaxis, :])[0]
 
     def _compute_node_weights(self) -> np.ndarray:
@@ -315,7 +347,7 @@ class GraphDataset(BaseDataset):
     def get_dataset_loss_weights(self, log=True) -> torch.Tensor:
         labels = self.get_labels()
         if self.supervision_mode == "node":
-            class_counts = fast_histogram(labels, nr_values=self.node_classes, nr_list=self.include_classes)
+            class_counts = fast_histogram(labels, nr_values=self.node_classes, nr_list=self.include_node_classes)
         else:
             class_counts = labels.sum(dim=0).numpy()
         if log:
@@ -477,6 +509,8 @@ class AugmentedGraphDataset(GraphDataset):
         # Set node labels
         if self.supervision_mode == "node":
             # augmented_graph.ndata[LABEL] = graph.ndata[LABEL]
+            # maybe consolidate node lables based on constants/run?
+            # i.e. combine mod(==3) and hi(==4) node classifications into mod-hi(==3)
             node_labels = augmented_graph.ndata[LABEL]
         else:
             node_labels = None
@@ -582,6 +616,7 @@ def prepare_graph_dataset(
     eval_segmentation: bool = False,
     augmentation_mode: Optional[str] = None,
     node_dropout: Optional[float] = 0.0,
+    split_combined_component_subgraphs: bool = False,
     **kwargs
 ) -> Dataset:
 
@@ -613,6 +648,7 @@ def prepare_graph_dataset(
         "downsample": downsample,
         "centroid_features_mode": centroid_features_mode,
         "eval_segmentation": eval_segmentation,
+        "split_combined_component_subgraphs": split_combined_component_subgraphs,
         "augmentation_mode": augmentation_mode,
         "node_dropout": node_dropout
     }

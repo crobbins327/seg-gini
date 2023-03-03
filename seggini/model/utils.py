@@ -214,7 +214,12 @@ def get_batched_segmentation_maps(
 
 def get_segmentation_map(node_predictions, superpixels, NR_CLASSES):
     all_maps = list()
-    for label in range(NR_CLASSES):
+    if isinstance(NR_CLASSES, list):
+        node_list = NR_CLASSES
+    else:
+        node_list = list(range(NR_CLASSES))
+
+    for label in node_list:
         (spx_indices,) = np.where(node_predictions == label)
         spx_indices = spx_indices + 1
         map_l = np.isin(superpixels, spx_indices) * label

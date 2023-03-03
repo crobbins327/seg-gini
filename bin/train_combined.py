@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from typing import Optional, List, Dict
 import time
+# from tqdm import tqdm
 from tqdm.auto import trange
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data.sampler import WeightedRandomSampler
@@ -88,19 +89,51 @@ def train_classifier(
     # Data loaders
     train_dataloader = prepare_graph_dataloader(dataset=train_dataset,
                                                 shuffle=not params['balanced_sampling'],
+                                                # shuffle=False,
                                                 sampler=sampler,
                                                 **params)
-    params["batch_size"] = 1 \
-        if (VARIABLE_SIZE and data_config["val_data"]["eval_segmentation"]) \
-        else params["batch_size"]
+    if VARIABLE_SIZE and data_config["val_data"]["eval_segmentation"]:
+        params["batch_size"] = 1
+    else:
+        params["batch_size"] = params["batch_size"]
     val_dataloader = prepare_graph_dataloader(dataset=val_dataset, **params)
 
     # Compute device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Model
+    model_save_path = os.path.join(base_path, 'models',
+                                   'graph' + '_partial_' + str(
+                                       params["partial"]) + '_fold_' + str(
+                                       params["fold"])
+                                   )
+
+    # model_load_path = os.path.join(base_path, 'models',
+    #                                'graph' + '_partial_' + str(
+    #                                    params["partial"]) + '_fold_' + str(0)
+    #                                )
+    os.makedirs(str(model_save_path), exist_ok=True)
+
+    # load from best model
+    # print("loading from pretrained model....")
+    # model = torch.load(os.path.join(model_save_path, "best_model_ch.pt"))
     model = CombinedClassifier(node_classes=NODE_CLASSES, graph_classes=SLIDE_CLASSES, **model_config)
+
     model = model.to(device)
+
+    # Optimizer
+    optim, scheduler = get_optimizer(params["optimizer"], model)
+
+    start_epoch = 0
+
+    # load from checkpoint
+    # print("loading from checkpoint....\n{}".format(model_load_path))
+    # checkpoint = torch.load(os.path.join(model_load_path, "checkpoint.tar"))
+    # model.load_state_dict(checkpoint['model_state_dict'])
+    # optim.load_state_dict(checkpoint['optimizer_state_dict'])
+    # start_epoch = checkpoint['epoch']
+    start_epoch = 0
+    # combined_loss = checkpoint['loss']
 
     # Loss functions
     train_loss = copy.deepcopy(params["loss"])
@@ -135,34 +168,33 @@ def train_classifier(
         val_dataset.set_mode("node")
     val_criterion = CombinedCriterion(val_loss, device)
 
-    # Optimizer
-    optim, scheduler = get_optimizer(params["optimizer"], model)
+    logg_background = NODE_CLASSES if BACKGROUND_CLASS < 0 else BACKGROUND_CLASS
 
     # Metrics
     train_graph_metric_logger = LoggingHelper(
         name="graph",
         metrics_config=metrics_config,
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=SLIDE_CLASSES,
         eval_segmentation=False
     )
     train_node_metric_logger = LoggingHelper(
         name="node",
         metrics_config=metrics_config,
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=NODE_CLASSES,
         eval_segmentation=False
     )
     train_combined_metric_logger = BaseLogger(
         metrics_config={},
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=NODE_CLASSES,
     )
     val_graph_metric_logger = LoggingHelper(
         name="graph",
         metrics_config=metrics_config,
         focused_metric=params["focused_metric"],
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=SLIDE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
@@ -173,7 +205,7 @@ def train_classifier(
         name="node",
         metrics_config=metrics_config,
         focused_metric=params["focused_metric"],
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=NODE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
@@ -183,7 +215,7 @@ def train_classifier(
     val_combined_metric_logger = BaseLogger(
         metrics_config={},
         focused_metric=params["focused_metric"],
-        background_label=BACKGROUND_CLASS,
+        background_label=logg_background,
         nr_classes=NODE_CLASSES,
         discard_threshold=DISCARD_THRESHOLD,
         threshold=THRESHOLD,
@@ -191,12 +223,15 @@ def train_classifier(
     )
 
     # Training loop
-    for epoch in trange(params["num_epochs"]):
+    for epoch in trange(start_epoch, params["num_epochs"]):
+    # for epoch in trange(1):
         start_time = time.time()
-
+        print("\nstarting epoch {}".format(epoch))
+        print("\ntraining phase...")
         # Train model
         model.train()
-        for graph_batch in train_dataloader:
+        for batch_indx, graph_batch in enumerate(train_dataloader):
+            # print(graph_batch.names)
             optim.zero_grad()
 
             graph = graph_batch.meta_graph.to(device)
@@ -241,8 +276,9 @@ def train_classifier(
         # Validate model
         val_metrics = None
         if epoch % params['validation_frequency'] == 0:
+            print("\nvalidating phase...")
             model.eval()
-            for graph_batch in val_dataloader:
+            for batch_indx, graph_batch in enumerate(val_dataloader):
                 with torch.no_grad():
                     graph = graph_batch.meta_graph.to(device)
                     graph_logits, node_logits = model(graph)
@@ -257,14 +293,13 @@ def train_classifier(
                     }
                     combined_loss, graph_loss, node_loss = val_criterion(**loss_information)
 
-                assert (
-                        graph_batch.segmentation_masks is not None
-                ), f"Cannot compute segmentation metrics if annotations are not loaded"
-
                 # Graph Head Prediction
                 if data_config["val_data"]["eval_segmentation"]:
+                    assert (
+                            graph_batch.segmentation_masks is not None
+                    ), f"Cannot compute segmentation metrics if annotations are not loaded"
                     inferencer = GraphGradCAMBasedInference(
-                        NODE_CLASSES, model, device=device
+                        SLIDE_CLASSES, model, device=device
                     )
                     segmentation_maps = inferencer.predict_batch(
                         graph, graph_batch.instance_maps
@@ -327,6 +362,30 @@ def train_classifier(
               ' -train_metrics: ', train_metrics,
               ' -val_metrics: ', val_metrics, '\n')
 
+        if epoch % params["checkpoint_frequency"] == 0:
+            print("\nsaving checkpoint...")
+            if val_graph_metric_logger.best_model is not None:
+                print("saving best model (graph)...")
+                best_model = val_graph_metric_logger.best_model
+            elif val_node_metric_logger.best_model is not None:
+                print("saving best model (node)...")
+                best_model = val_node_metric_logger.best_model
+            elif val_combined_metric_logger.best_model is not None:
+                print("saving best model (combined)...")
+                best_model = val_combined_metric_logger.best_model
+            else:
+                print('ERROR! best model is None, using this model for checkpoint...')
+                best_model = model
+            torch.save(best_model, os.path.join(model_save_path, "best_model_ch.pt"))
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optim.state_dict(),
+                'loss': combined_loss,
+            },
+            os.path.join(model_save_path, "checkpoint.tar"))
+
+
     if val_graph_metric_logger.best_model is not None:
         return val_graph_metric_logger.best_model
     elif val_node_metric_logger.best_model is not None:
@@ -356,25 +415,22 @@ if __name__ == "__main__":
     )
 
     # Save model
-    model_save_path = base_path / \
-                      'models' / \
-                      ('graph' +
-                       '_partial_' + str(config["train"]["params"]["partial"]) +
-                       '_fold_' + str(config["train"]["params"]["fold"]))
+    model_save_path = os.path.join(base_path, 'models',
+                                   'graph' + '_partial_' + str(config["train"]["params"]["partial"]) + '_fold_' + str(config["train"]["params"]["fold"])
+                                   )
     os.makedirs(str(model_save_path), exist_ok=True)
-    torch.save(model, model_save_path / "best_model.pt")
+    torch.save(model, os.path.join(model_save_path, "best_model.pt"))
+    # model = torch.load(os.path.join(model_save_path, "best_model_ch.pt"))
 
     # Test classifier
     print('\nTESTING\n')
-    prediction_save_path = base_path / \
-                           'predictions' / \
-                           ('graph' +
-                            '_partial_' + str(config["train"]["params"]["partial"]) +
-                            '_fold_' + str(config["train"]["params"]["fold"]))
+    prediction_save_path = os.path.join(base_path, 'predictions',
+                                        'graph' + '_partial_' + str(config["train"]["params"]["partial"]) + '_fold_' + str(config["train"]["params"]["fold"])
+                                        )
     os.makedirs(str(prediction_save_path), exist_ok=True)
 
     # Test data set
-    test_dataset = prepare_graph_dataset(base_path=base_path, mode="test", **config["test"]["data"]["test_data"])
+    test_dataset = prepare_graph_dataset(base_path=base_path, mode="test", fold = config["train"]["params"]["fold"], partial= config["train"]["params"]["partial"], **config["test"]["data"]["test_data"])
 
     # segmentation, area based gleason grading
     test_classifier(
